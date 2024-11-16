@@ -1,0 +1,164 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: "AWS::Serverless-2016-10-31"
+Description: CF stack for the CUJO homework
+
+Parameters:
+  S3ArtifactBucket:
+    Type: String
+    Description: S3 Bucket for Lambda deployment packages
+  ServiceName:
+    Type: String
+    Description: The service name. e.g. compliance-spain-sci-reconciliation
+  Version:
+    Type: String
+    Description: The version number of Lambdas to be deployed, eg. '0.1.11'
+  LogGroupMasterKeyId:
+    Type: String
+    Description: ID of KMS Key to be used for encryption in logs
+  ApiDomain:
+    Type: String
+    Description: The domain to be set for the API Gateway
+  DomainCertificateId:
+    Type: String
+    Description: Id of the ACM certificate to be used
+  Route53HostedZone:
+    Type: String
+    Description: The name of the hosted zone where records will be created
+    Default: "paf-compliance-dev.com."
+  CustomTruststoreUri:
+    Type: String
+    Description: S3 URI to custom truststore
+  CustomTruststoreVersion:
+    Type: String
+    Description: S3 object version of custom truststore
+  SigningKeyId:
+    Type: String
+    Description: ID of KMS Key used for signing JWT tokens
+
+Globals:
+  Function:
+    Timeout: 60
+    Runtime: nodejs20.x
+    Environment:
+      Variables:
+        # To use source maps in AWS Lambda
+        NODE_OPTIONS: "--enable-source-maps"
+    VpcConfig:
+      # Set up custom security group and private subnets
+      SecurityGroupIds:
+        - !ImportValue "infrastructure-customSecurityGroupId"
+      SubnetIds:
+        # Running Lambdas in private subnet
+        Fn::Split: [", ", !ImportValue "infrastructure-privateSubnets"]
+
+Resources:
+  ApiWithTokenVerifier:
+    Type: AWS::Serverless::Api
+    Properties:
+      StageName: api
+      Name: !Sub ${ServiceName}-api-gateway
+      EndpointConfiguration:
+        Type: REGIONAL
+      OpenApiVersion: 3.0.1
+      Auth:
+        AddDefaultAuthorizerToCorsPreflight: false
+        DefaultAuthorizer: JWTAuthorizer
+        Authorizers:
+          JWTAuthorizer:
+            FunctionArn: !GetAtt JWTAuthorizerFunction.Arn
+        # Could add IP range whitelist in ResourcePolicy
+      GatewayResponses:
+        DEFAULT_4xx:
+          ResponseTemplates:
+            "application/json": '{"message": "client error"}'
+        DEFAULT_5xx:
+          ResponseTemplates:
+            "application/json": '{"message": "internal error"}'
+      DisableExecuteApiEndpoint: true
+      Domain:
+        DomainName: !Ref ApiDomain
+        CertificateArn: !Sub "arn:aws:acm:${AWS::Region}:${AWS::AccountId}:certificate/${DomainCertificateId}"
+        Route53:
+          HostedZoneName: !Ref Route53HostedZone
+        MutualTlsAuthentication:
+          TruststoreUri: !Ref CustomTruststoreUri
+          TruststoreVersion: !Ref CustomTruststoreVersion
+        SecurityPolicy: TLS_1_2
+      MethodSettings:
+        - ResourcePath: "/*"
+          HttpMethod: "*"
+          ThrottlingBurstLimit: 2500
+          ThrottlingRateLimit: 5000
+  
+  ### Custom Authorizer to be used in all API Gateway endpoints
+  JWTAuthorizerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${ServiceName}-jwt-auth-role"
+      ManagedPolicyArns:
+        - "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+        - "arn:aws:iam::aws:policy/AWSXrayWriteOnlyAccess"
+        - "arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole"
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: "sts:AssumeRole"
+  JWTAuthorizerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${ServiceName}-jwt-authorizer"
+      CodeUri:
+        Bucket: !Ref S3ArtifactBucket
+        Key: !Sub "${ServiceName}/authorizer-${Version}.zip"
+      Handler: index.handler
+      Environment:
+        Variables:
+          AWS_REGION: !Ref AWS::Region
+          KMS_KEY_ID: !Ref SigningKeyId
+      Role: !GetAtt JWTAuthorizerRole.Arn
+      Tracing: Active
+
+  JWTAuthorizerLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${JWTAuthorizerFunction}"
+      KmsKeyId: !Sub "arn:aws:kms:${AWS::Region}:${AWS::AccountId}:key/${LogGroupMasterKeyId}"
+      RetentionInDays: 60
+
+  HelloWorldFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${ServiceName}-api-role"
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: "sts:AssumeRole"
+      ManagedPolicyArns:
+        - "arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole"
+        - "arn:aws:iam::aws:policy/service-role/AWSLambdaRole"
+
+  HelloWorldFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${ServiceName}-hello-world"
+      InlineCode: |
+        exports.handler = async (event) => {
+            return {
+                statusCode: 200,
+                body: JSON.stringify('Hello, World!'),
+            };
+        };
+      Role: !GetAtt HelloWorldFunctionRole.Arn
+      Events:
+        HelloWorldApi:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiWithTokenVerifier
+            Path: /hello
+            Method: POST
