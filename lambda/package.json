@@ -1,7 +1,7 @@
 {
   "name": "token-issuer",
   "version": "0.0.1",
-  "description": "An AWS Lambda function that issues JWT tokes",
+  "description": "An AWS Lambda function that issues JWT tokens",
   "main": "index.js",
   "scripts": {
     "test": "jest .",

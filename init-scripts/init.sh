@@ -1,8 +1,6 @@
 #!/bin/sh
-set -e
 
-runtime=nodejs18.x
-#kmsKeyId=69b85039-761b-47db-822e-4880dc7f30af
+runtime=nodejs20.x
 kmsKeyAlias=alias/signing-key
 region=eu-west-1
 

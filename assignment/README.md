@@ -1,9 +1,5 @@
 # Homework
 
-This is a homework as part of the hiring process for Cujo AI. We hope you'll find this assignment interesting and relevant for the job you are applying for.
-
-Please read the instructions below carefully. If you are unsure about the requirements or if you have any problems or questions related to the environment, don't hesitate to contact the hiring manager. Happy coding!
-
 ## Introduction
 
 In this homework, you are tasked to implement a token endpoint that issues OAuth tokens as per [OAuth 2.0 Client Credentials Grant](https://datatracker.ietf.org/doc/html/rfc6749#section-4.4). However, the implementation does not have to conform to the full standard and you don't need to support parameters that are OPTIONAL in the RFC to limit the scope of the homework. E.g. you don't need to implement support for refresh tokens.
